@@ -22,6 +22,7 @@ ament_target_dependencies(map_pub rclcpp std_msgs message_interfaces)
 add_executable(path_plan src/path_plan.cpp)
 ament_target_dependencies(path_plan rclcpp std_msgs message_interfaces)
 
+
 install(TARGETS
   map_pub
   path_plan

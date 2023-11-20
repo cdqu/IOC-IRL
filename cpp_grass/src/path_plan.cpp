@@ -1,9 +1,3 @@
-//path_planning
-//node: my_planning
-//sub_topic: map_2d
-//pub_topic: traj
-//本程序只往txt中写一次，持续发布轨迹信息
-
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/int16.hpp"
@@ -20,11 +14,10 @@
 # include <iomanip>
 # include <cmath>
 # include <fstream>
-using namespace std;
+
+using std::placeholders::_1; //占一个位置
 
 // 定义为全局变量
-static ros::Subscriber sub, sub1;
-static ros::Publisher pub, pub_to_ctrl;
 int flag, flag_as, flag1;
 double x_0 = 0;
 double y_0 = 0;
@@ -78,7 +71,7 @@ struct mapPoint  //地图结构
     Point2D next_point_position = Point2D(-1, -1);
     Point2D prev_point_position = Point2D(-1, -1);
 };
-map<Point2D, mapPoint> my_map;  //地图
+std::map<Point2D, mapPoint> my_map;  //地图
 
 bool operator<(const Point2D& p1, const Point2D& p2) {
     return (p1.x < p2.x) || ((p1.x == p2.x) && (p1.y < p2.y));
@@ -97,12 +90,12 @@ struct obstacle  //障碍物
     bool if_at_bound = false;  //是否靠边界
     int num = 0;  //标号 从1开始
 };
-map<int, obstacle> ob_set;  //障碍物集
+std::map<int, obstacle> ob_set;  //障碍物集
 
 
-vector<Point2D> visited_Point;  //访问过的点集
-vector<Pos3D> opPath;  //2D点路径
-vector<Pos3D> Traj;  //曲线轨迹
+std::vector<Point2D> visited_Point;  //访问过的点集
+std::vector<Pos3D> opPath;  //2D点路径
+std::vector<Pos3D> Traj;  //曲线轨迹
 
 Pos3D getUpper(Pos3D root_position)  //获取上方邻居位置
 {
@@ -306,189 +299,129 @@ void completeCoveragePathPlanning(Pos3D current_position)  //全覆盖规划
 
 double map_x, map_y, map_the;
 
-// 回调函数
-void callback(const message_interfaces::msg::Mymap::ConstPtr& msg)
+
+//////////////// node definition ////////////////
+class SolveNode:public rclcpp::Node //自定义节点继承public rclcpp::Node
 {
-    if(flag_as == 0)//初始规划只运行一次
+public:
+//构造函数
+    SolveNode(std::string name):Node(name){
+        //RCLCPP_INFO(this->get_logger(),"这是%s的构造函数",name.c_str());//打印节点
+        suber=this->create_subscription<message_interfaces::msg::Mymap>("map_2d",10,std::bind(&SolveNode::callback,this,_1));
+        puber=this->create_publisher<message_interfaces::msg::Mytraj>("traj",10); //trajectory publisher
+    }
+
+private:
+//回调函数 
+    void callback(const message_interfaces::msg::Mymap::SharedPtr msg)
     {
-        MAP_HEIGHT = msg->map_height;
-        MAP_WIDTH = msg->map_width;
-        // 建图
-        for (int i = 0; i < MAP_WIDTH; i++)
+        RCLCPP_INFO(this->get_logger(),"have %d obstacles",msg->ob_num);//打印节点
+        if(flag_as == 0)//初始规划只运行一次
         {
-            for (int j = 0; j < MAP_HEIGHT; j++)
+            MAP_HEIGHT = msg->map_height;
+            MAP_WIDTH = msg->map_width;
+            // 建图
+            for (int i = 0; i < MAP_WIDTH; i++)
             {
-                mapPoint mapP;
-                my_map.insert(make_pair(Point2D(i, j), mapP));
-            }
-        }
-
-        //障碍物设置
-        
-        std::vector<message_interfaces::msg::Obstacle> obset_;
-        obset_ = msg->ob_set;
-        int obNum = msg->ob_num;
-        vector<Point2D> obstacal_Point, obstacle_Size;
-        for (int j = 0; j < obNum; j++)
-        {
-            obstacal_Point.push_back(Point2D(obset_[j].left_lower_pos_x, obset_[j].left_lower_pos_y)); //障碍左下角方格坐标
-            obstacle_Size.push_back(Point2D(obset_[j].ob_width, obset_[j].ob_height));                 //障碍物大小:宽度和高度
-        }
-    
-        for (int i = 0; i < obstacal_Point.size(); i++)
-        {
-            obstacle ob;
-            ob.left_lower_pos = obstacal_Point[i];
-            ob.ob_width = obstacle_Size[i].x;
-            ob.ob_height = obstacle_Size[i].y;
-            ob.num = i + 1;
-            ob_set.insert(make_pair(i + 1, ob));
-
-            for (int m = 0; m < ob.ob_width; m++)
-            {
-                for (int n = 0; n < ob.ob_height; n++)
+                for (int j = 0; j < MAP_HEIGHT; j++)
                 {
-                    my_map[Point2D(obstacal_Point[i].x + m, obstacal_Point[i].y + n)].occupancy = i + 1;
+                    mapPoint mapP;
+                    my_map.insert(std::make_pair(Point2D(i, j), mapP));
                 }
             }
-        }
+
+            //障碍物设置
+
+            std::vector<message_interfaces::msg::Obstacle> obset_;
+            obset_ = msg->ob_set;
+            int obNum = msg->ob_num;
+            std::vector<Point2D> obstacal_Point, obstacle_Size;
+            for (int j = 0; j < obNum; j++)
+            {
+                obstacal_Point.push_back(Point2D(obset_[j].left_lower_pos_x, obset_[j].left_lower_pos_y)); //障碍左下角方格坐标
+                obstacle_Size.push_back(Point2D(obset_[j].ob_width, obset_[j].ob_height));                 //障碍物大小:宽度和高度
+            }
+    
+            for (int i = 0; i < obstacal_Point.size(); i++)
+            {
+                obstacle ob;
+                ob.left_lower_pos = obstacal_Point[i];
+                ob.ob_width = obstacle_Size[i].x;
+                ob.ob_height = obstacle_Size[i].y;
+                ob.num = i + 1;
+                ob_set.insert(std::make_pair(i + 1, ob));
+
+                for (int m = 0; m < ob.ob_width; m++)
+                {
+                    for (int n = 0; n < ob.ob_height; n++)
+                    {
+                        my_map[Point2D(obstacal_Point[i].x + m, obstacal_Point[i].y + n)].occupancy = i + 1;
+                    }
+                }
+            }
         
 
-        Pos3D start = Pos3D(0, 0, 90, 0); //起点
+            Pos3D start = Pos3D(0, 0, 90, 0); //起点
 
-        completeCoveragePathPlanning(start);
+            completeCoveragePathPlanning(start);
 
-        //输出
-        message_interfaces::msg::Mytraj mytraj_;
-        mytraj_.path_len = opPath.size();
-        vector<float> vec_path;
-        int n = 0;
-        up_or_down = 0;
-        Pos3D new_pos = Pos3D(-1, -1, -1, 0);
-        //写入文件
-        if (flag == 0)
-        {
-            ofstream outfile;
-            outfile.open("/home/qucd/point.txt", ios::out | ios::binary);
-            for (n = 0; n < opPath.size(); n++)
+            //输出
+            message_interfaces::msg::Mytraj mytraj_;
+            mytraj_.path_len = opPath.size();
+            std::vector<float> vec_path;
+            int n = 0;
+            up_or_down = 0;
+            Pos3D new_pos = Pos3D(-1, -1, -1, 0);
+            //写入文件
+            if (flag == 0)
             {
-                //cout << "(" << opPath[n].x << "," << opPath[n].y << ")" << endl;
-                vec_path.push_back(opPath[n].x);
-                vec_path.push_back(opPath[n].y);
-                vec_path.push_back(opPath[n].theta);
-                vec_path.push_back(opPath[n].ori);
-                // map_x = (-opPath[n].x) * car_wid * cos(dtheta* M_PI / 180) - opPath[n].y * sin(dtheta* M_PI / 180) + x_0;
-                // map_y = (-opPath[n].x) * car_wid * sin(dtheta* M_PI / 180) + opPath[n].y * cos(dtheta* M_PI / 180) + y_0;
-                map_x = opPath[n].x * car_wid * cos(dtheta* M_PI / 180) - opPath[n].y * sin(dtheta* M_PI / 180) + x_0;
-                map_y = opPath[n].x * car_wid * sin(dtheta* M_PI / 180) + opPath[n].y * cos(dtheta* M_PI / 180) + y_0;
-                //outfile << opPath[n].x << "," << opPath[n].y << "," << opPath[n].theta << ","
-                outfile << map_x << "," << map_y << "," << opPath[n].theta + dtheta << ","
-                        << opPath[n].ori << ","
-                        << "false;" << endl;
+                std::ofstream outfile;
+                outfile.open("/home/fins/point.txt", std::ios::out | std::ios::binary);
+                for (n = 0; n < opPath.size(); n++)
+                {
+                    //cout << "(" << opPath[n].x << "," << opPath[n].y << ")" << endl;
+                    vec_path.push_back(opPath[n].x);
+                    vec_path.push_back(opPath[n].y);
+                    vec_path.push_back(opPath[n].theta);
+                    vec_path.push_back(opPath[n].ori);
+                    // map_x = (-opPath[n].x) * car_wid * cos(dtheta* M_PI / 180) - opPath[n].y * sin(dtheta* M_PI / 180) + x_0;
+                    // map_y = (-opPath[n].x) * car_wid * sin(dtheta* M_PI / 180) + opPath[n].y * cos(dtheta* M_PI / 180) + y_0;
+                    map_x = opPath[n].x * car_wid * cos(dtheta* M_PI / 180) - opPath[n].y * sin(dtheta* M_PI / 180) + x_0;
+                    map_y = opPath[n].x * car_wid * sin(dtheta* M_PI / 180) + opPath[n].y * cos(dtheta* M_PI / 180) + y_0;
+                    //outfile << opPath[n].x << "," << opPath[n].y << "," << opPath[n].theta << ","
+                    outfile << map_x << "," << map_y << "," << opPath[n].theta + dtheta << ","
+                            << opPath[n].ori << ","
+                            << "false;" << std::endl;
+                }
+                outfile.close();
+                std::cout << "txt change" << std::endl;
+                flag = 1;
             }
-            outfile.close();
-            cout << "txt change" << endl;
-            flag = 1;
+            mytraj_.my_traj = vec_path;
+            puber->publish(mytraj_);
+
+            //std::cout << "receive msg:" << obset_.size() << std::endl;
+            std::cout << "traj published" << std::endl;
+
+            opPath.clear(); //每次循环要清空
         }
-        mytraj_.my_traj = vec_path;
-        pub.publish(mytraj_);
-
-        //std::cout << "receive msg:" << obset_.size() << std::endl;
-        std::cout << "traj published" << std::endl;
-
-        opPath.clear(); //每次循环要清空
+        else{}
     }
-    else{}
+//定义变量
+    rclcpp::Subscription<message_interfaces::msg::Mymap>::SharedPtr suber;//订阅者
+    rclcpp::Publisher<message_interfaces::msg::Mytraj>::SharedPtr puber;
 };
 
-//处理突然出现的障碍
-void callback_astar(const message_interfaces::msg::Astarob::ConstPtr& end_poi)
+
+//////////////// main function ////////////////
+int main(int argc,char ** argv) //argc参数个数，argv参数数组
 {
-    std::vector<message_interfaces::msg::Obstacle> as_obset_;
-    as_obset_ = end_poi->ob_set;
-    int obNum = as_obset_.size();
-    vector<Point2D> as_obstacal_Point, as_obstacle_Size;
-    for (int j = 0; j < obNum; j++)
-    {
-        as_obstacal_Point.push_back(Point2D(as_obset_[j].left_lower_pos_x, as_obset_[j].left_lower_pos_y)); //障碍左下角方格坐标
-        as_obstacle_Size.push_back(Point2D(as_obset_[j].ob_width, as_obset_[j].ob_height));                 //障碍物大小:宽度和高度
-    }
-    
-    for (int i = 0; i < as_obstacal_Point.size(); i++)
-    {
-        obstacle as_ob;
-        as_ob.left_lower_pos = as_obstacal_Point[i];
-        as_ob.ob_width = as_obstacle_Size[i].x;
-        as_ob.ob_height = as_obstacle_Size[i].y;
-        as_ob.num = i + 1;
-        ob_set.insert(make_pair(i + 1, as_ob));
-
-        for (int m = 0; m < as_ob.ob_width; m++)
-        {
-            for (int n = 0; n < as_ob.ob_height; n++)
-            {
-                my_map[Point2D(as_obstacal_Point[i].x + m, as_obstacal_Point[i].y + n)].occupancy = i + 1;
-            }
-        }
-    }
-
-    cout << "start:" << end_poi->endx << end_poi->endy << endl;
-    Pos3D start = Pos3D(end_poi->endx, end_poi->endy, 90, 0); //起点
-    completeCoveragePathPlanning(start);
-
-    //输出
-    message_interfaces::msg::Mytraj mytraj_;
-    mytraj_.path_len = opPath.size();
-    vector<float> vec_path; 
-    up_or_down = 0;   //////////////////////要改?好像不用
-    Pos3D new_pos = Pos3D(-1,-1,-1, 0);
-    //写入文件
-    ofstream outfile;
-    outfile.open("/home/qucd/point.txt", ios::app | ios::binary);
-    for (int n = 0; n < opPath.size(); n++)
-    {
-        //cout << "(" << opPath[n].x << "," << opPath[n].y << ")" << endl;
-        vec_path.push_back(opPath[n].x);
-        vec_path.push_back(opPath[n].y);
-        vec_path.push_back(opPath[n].theta);
-        vec_path.push_back(opPath[n].ori);
-        map_x = opPath[n].x * car_wid * cos(dtheta* M_PI / 180) - opPath[n].y * sin(dtheta* M_PI / 180) + x_0;
-        map_y = opPath[n].x * car_wid * sin(dtheta* M_PI / 180) + opPath[n].y * cos(dtheta* M_PI / 180) + y_0;
-        outfile << map_x << "," << map_y << "," << opPath[n].theta + dtheta << ","
-                << opPath[n].ori << ","
-                << "false;" << endl;
-    }
-    outfile.close();
-    cout << "txt change" << endl;
-    mytraj_.my_traj = vec_path;
-    pub.publish(mytraj_);
-
-    std::cout << "new_traj published" << std::endl;
-    std_msgs::String txt_change_msg;
-    txt_change_msg.data = "true";
-    pub_to_ctrl.publish(txt_change_msg);
-
-    opPath.clear(); //每次循环要清空
-};
-
-int main(int argc, char *argv[])
-{
-    // 初始化ROS并指定节点名称
-    ros::init(argc, argv, "my_planning");
-    // 创建节点句柄
-    ros::NodeHandle nh;
+    rclcpp::init(argc,argv);//初始化
     flag = 0;
     flag_as = 0;
     flag1 = 0;
-
-    // 利用节点句柄对sub和pub初始化
-    sub = nh.subscribe("map_2d", 10, callback);
-    sub1 = nh.subscribe("replan", 10, callback_astar);
-    pub = nh.advertise<message_interfaces::msg::Mytraj>("traj", 1);
-    pub_to_ctrl = nh.advertise<std_msgs::String>("txt_change", 5);
-
-    // 循环执行
-    ros::spin();
-    return 0;
+    auto node=std::make_shared<SolveNode>("my_planning");//新建节点对象，类型是Node指针
+    RCLCPP_INFO(node->get_logger(),"这是订阅节点主函数");//打印节点
+    rclcpp::spin(node);//循环节点
+    rclcpp::shutdown();//关闭节点
 }
-
