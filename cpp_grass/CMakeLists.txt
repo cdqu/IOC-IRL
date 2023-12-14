@@ -21,11 +21,20 @@ add_executable(map_pub src/map_pub.cpp)
 ament_target_dependencies(map_pub rclcpp std_msgs message_interfaces)
 add_executable(path_plan src/path_plan.cpp)
 ament_target_dependencies(path_plan rclcpp std_msgs message_interfaces)
+add_executable(obs_pub src/obs_pub.cpp)
+ament_target_dependencies(obs_pub rclcpp std_msgs message_interfaces)
+add_executable(astar_sub src/astar_sub.cpp)
+ament_target_dependencies(astar_sub rclcpp std_msgs message_interfaces)
+add_executable(check_ob src/check_ob.cpp)
+ament_target_dependencies(check_ob rclcpp std_msgs message_interfaces)
 
 
 install(TARGETS
   map_pub
   path_plan
+  obs_pub
+  astar_sub
+  check_ob
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

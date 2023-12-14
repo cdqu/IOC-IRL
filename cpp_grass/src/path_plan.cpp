@@ -309,6 +309,8 @@ public:
         //RCLCPP_INFO(this->get_logger(),"这是%s的构造函数",name.c_str());//打印节点
         suber=this->create_subscription<message_interfaces::msg::Mymap>("map_2d",10,std::bind(&SolveNode::callback,this,_1));
         puber=this->create_publisher<message_interfaces::msg::Mytraj>("traj",10); //trajectory publisher
+        sub_as=this->create_subscription<message_interfaces::msg::Astarob>("replan",10,std::bind(&SolveNode::callback_astar,this,_1));
+        pub_to_ctrl=this->create_publisher<std_msgs::msg::String>("txt_change",10);
     }
 
 private:
@@ -407,9 +409,82 @@ private:
         }
         else{}
     }
+
+    //处理突然出现的障碍
+    void callback_astar(const message_interfaces::msg::Astarob::ConstPtr& end_poi)
+    {
+        std::vector<message_interfaces::msg::Obstacle> as_obset_;
+        as_obset_ = end_poi->ob_set;
+        int obNum = as_obset_.size();
+        std::vector<Point2D> as_obstacal_Point, as_obstacle_Size;
+        for (int j = 0; j < obNum; j++)
+        {
+            as_obstacal_Point.push_back(Point2D(as_obset_[j].left_lower_pos_x, as_obset_[j].left_lower_pos_y)); //障碍左下角方格坐标
+            as_obstacle_Size.push_back(Point2D(as_obset_[j].ob_width, as_obset_[j].ob_height));                 //障碍物大小:宽度和高度
+        }
+        
+        for (int i = 0; i < as_obstacal_Point.size(); i++)
+        {
+            obstacle as_ob;
+            as_ob.left_lower_pos = as_obstacal_Point[i];
+            as_ob.ob_width = as_obstacle_Size[i].x;
+            as_ob.ob_height = as_obstacle_Size[i].y;
+            as_ob.num = i + 1;
+            ob_set.insert(std::make_pair(i + 1, as_ob));
+
+            for (int m = 0; m < as_ob.ob_width; m++)
+            {
+                for (int n = 0; n < as_ob.ob_height; n++)
+                {
+                    my_map[Point2D(as_obstacal_Point[i].x + m, as_obstacal_Point[i].y + n)].occupancy = i + 1;
+                }
+            }
+        }
+
+        std::cout << "start:" << end_poi->endx << end_poi->endy << std::endl;
+        Pos3D start = Pos3D(end_poi->endx, end_poi->endy, 90, 0); //起点
+        completeCoveragePathPlanning(start);
+
+        //输出
+        message_interfaces::msg::Mytraj mytraj_;
+        mytraj_.path_len = opPath.size();
+        std::vector<float> vec_path; 
+        up_or_down = 0;   //////////////////////要改?好像不用
+        Pos3D new_pos = Pos3D(-1,-1,-1, 0);
+        //写入文件
+        std::ofstream outfile;
+        outfile.open("/home/fins/point.txt", std::ios::app | std::ios::binary);
+        for (int n = 0; n < opPath.size(); n++)
+        {
+            //cout << "(" << opPath[n].x << "," << opPath[n].y << ")" << endl;
+            vec_path.push_back(opPath[n].x);
+            vec_path.push_back(opPath[n].y);
+            vec_path.push_back(opPath[n].theta);
+            vec_path.push_back(opPath[n].ori);
+            map_x = opPath[n].x * car_wid * cos(dtheta* M_PI / 180) - opPath[n].y * sin(dtheta* M_PI / 180) + x_0;
+            map_y = opPath[n].x * car_wid * sin(dtheta* M_PI / 180) + opPath[n].y * cos(dtheta* M_PI / 180) + y_0;
+            outfile << map_x << "," << map_y << "," << opPath[n].theta + dtheta << ","
+                    << opPath[n].ori << ","
+                    << "false;" << std::endl;
+        }
+        outfile.close();
+        std::cout << "txt change" << std::endl;
+        mytraj_.my_traj = vec_path;
+        puber->publish(mytraj_);
+
+        std::cout << "new_traj published" << std::endl;
+        std_msgs::msg::String txt_change_msg;
+        txt_change_msg.data = "true";
+        pub_to_ctrl->publish(txt_change_msg);
+
+        opPath.clear(); //每次循环要清空
+    }
+
 //定义变量
     rclcpp::Subscription<message_interfaces::msg::Mymap>::SharedPtr suber;//订阅者
     rclcpp::Publisher<message_interfaces::msg::Mytraj>::SharedPtr puber;
+    rclcpp::Subscription<message_interfaces::msg::Astarob>::SharedPtr sub_as;//订阅者
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_to_ctrl;
 };
 
 
